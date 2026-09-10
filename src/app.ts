@@ -7,12 +7,16 @@ import { hashIp, logEvent } from "./log";
 import { createPaymentService, type PaymentService } from "./payment";
 import { docsRoutes } from "./routes/docs";
 import { itemRoutes } from "./routes/items";
+import { shareRoutes } from "./routes/share";
+import { dlRoutes } from "./routes/dl";
 
 export type Variables = {
   config: Config;
   payments: PaymentService;
   requestId: string;
   logFields: Record<string, unknown>;
+  /** True when the request arrived on the share (download) domain. */
+  isDl: boolean;
 };
 
 export type AppContext = { Bindings: Env; Variables: Variables };
@@ -28,7 +32,15 @@ export function createApp() {
     c.set("config", config);
     c.set("payments", createPaymentService(config));
     c.set("logFields", {});
+    const reqUrl = new URL(c.req.url);
+    const isDl = reqUrl.host === new URL(config.dlOrigin).host && reqUrl.host !== new URL(config.apiOrigin).host;
+    c.set("isDl", isDl);
     c.header("X-Request-Id", requestId);
+    // Each domain answers only its own routes (DESIGN.md 4, DL-08).
+    const isDlPath = reqUrl.pathname.startsWith("/d/");
+    if (isDl !== isDlPath) {
+      throw new ApiError(404, "not_found", "No such route on this host.", { description: "API routes live on the API origin; share links on the share origin.", method: "GET", url: `${config.apiOrigin}/llms.txt` });
+    }
     await next();
     c.header("X-Request-Id", requestId);
     const url = new URL(c.req.url);
@@ -70,6 +82,8 @@ export function createApp() {
 
   docsRoutes(app);
   itemRoutes(app);
+  shareRoutes(app);
+  dlRoutes(app);
 
   // Method not allowed for known collection paths.
   app.all("/v1/items", (c) => {

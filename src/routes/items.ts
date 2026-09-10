@@ -110,8 +110,9 @@ export async function requirePayment(
   const payments = c.get("payments");
   const cfg = c.get("config");
   const resourceUrl = new URL(c.req.url);
-  resourceUrl.protocol = new URL(cfg.apiOrigin).protocol;
-  resourceUrl.host = new URL(cfg.apiOrigin).host;
+  const origin = new URL(c.get("isDl") ? cfg.dlOrigin : cfg.apiOrigin);
+  resourceUrl.protocol = origin.protocol;
+  resourceUrl.host = origin.host;
   const url = resourceUrl.toString();
   const header = c.req.header(PAYMENT_SIGNATURE_HEADER);
 
@@ -352,20 +353,28 @@ export function formatUsdc(atomic: string): string {
 }
 
 async function retrieveHandler(c: Ctx): Promise<Response> {
+  const cur = await loadOwnedItem(c, c.req.param("id") as string);
+  c.get("logFields").access = "secret";
+  return serveContent(c, cur.meta, "api");
+}
+
+/**
+ * Serve an item's content on either domain. Handles the read quota, including
+ * pay-on-read, decrements the soft counter in the background, and sets the
+ * headers the domain requires (DESIGN.md 4 and 7).
+ */
+export async function serveContent(c: Ctx, meta: Meta, domain: "api" | "dl"): Promise<Response> {
   const cfg = c.get("config");
   const bucket = c.env.BUCKET;
-  const id = c.req.param("id") as string;
-  const cur = await loadOwnedItem(c, id);
-  const meta = cur.meta;
-  c.get("logFields").access = "secret";
+  const id = meta.id;
 
   let servedMeta = meta;
   let paymentResponseHeader: string | undefined;
   if (meta.readsRemaining <= 0) {
     // Pay-on-read: an x402 client pays on this same request, gets a read pack
     // applied and the content in one round. Without payment: an x402 402.
-    const url = `${cfg.apiOrigin}/v1/items/${id}`;
-    const action = { description: `Pay $${cfg.priceUsd} USDC on this request, or buy ${cfg.readPackSize} reads in advance at the reads URL, then retry.`, method: "POST", url: `${url}/reads` };
+    const readsUrl = `${cfg.apiOrigin}/v1/items/${id}/reads`;
+    const action = { description: `Pay $${cfg.priceUsd} USDC on this request, or buy ${cfg.readPackSize} reads in advance at the reads URL, then retry.`, method: "POST", url: readsUrl };
     if (!c.req.header(PAYMENT_SIGNATURE_HEADER)) {
       try {
         await requirePayment(c, { description: `Add ${cfg.readPackSize} reads to item ${id}`, timeoutSeconds: cfg.otherTimeoutSeconds, code: "reads_exhausted", message: "This item has no reads left.", action });
@@ -386,6 +395,7 @@ async function retrieveHandler(c: Ctx): Promise<Response> {
     paymentResponseHeader = result.paymentResponseHeader;
     c.get("logFields").paid_read = true;
   }
+
   const obj = await getItemContent(bucket, id);
   if (!obj) throw notFound();
 
@@ -403,10 +413,13 @@ async function retrieveHandler(c: Ctx): Promise<Response> {
   headers.set("X-Expires-At", servedMeta.expiresAt);
   headers.set("X-Content-Type-Options", "nosniff");
   headers.set("Cache-Control", "no-store");
-  if (meta.kind === "binary" || meta.kind === "text") {
+  if (domain === "dl") headers.set("Referrer-Policy", "no-referrer");
+  const inline = meta.kind === "json" || meta.kind === "html" || meta.kind === "svg";
+  if (inline) {
+    if (meta.kind !== "json") headers.set("Content-Security-Policy", "sandbox allow-scripts allow-forms allow-popups");
+    if (domain === "dl" && meta.kind === "json") headers.set("Content-Disposition", `attachment; filename="${id}.json"`);
+  } else {
     headers.set("Content-Disposition", `attachment; filename="${id}${extensionFor(meta.contentType)}"`);
-  } else if (meta.kind === "html" || meta.kind === "svg") {
-    headers.set("Content-Security-Policy", "sandbox allow-scripts allow-forms allow-popups");
   }
   if (paymentResponseHeader) headers.set(PAYMENT_RESPONSE_HEADER, paymentResponseHeader);
   return new Response(obj.body, { status: 200, headers });

@@ -11,6 +11,9 @@
     { "binding": "BUCKET", "bucket_name": "datastore-items" }
   ],
   "triggers": { "crons": ["15 1 * * *"] },
+  "ratelimits": [
+    { "name": "PASSWORD_LIMITER", "namespace_id": "1001", "simple": { "limit": 30, "period": 60 } }
+  ],
   "vars": {
     "NETWORK": "eip155:84532",
     "PAY_TO": "0x0000000000000000000000000000000000000001",

@@ -10,10 +10,12 @@ import { privateKeyToAccount } from "viem/accounts";
 import { getAddress, verifyTypedData, type Hex } from "viem";
 import { setFacilitatorForTests } from "../src/payment";
 import { testHooks } from "../src/hooks";
+import { resetLimitsForTests } from "../src/limits";
 
 export const NETWORK = "eip155:84532";
 export const PAY_TO = "0x0000000000000000000000000000000000000001";
 export const API = "http://localhost:8787";
+export const DL = "http://localhost:8788";
 
 // Two deterministic test wallets.
 export const walletA = privateKeyToAccount("0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d");
@@ -112,6 +114,7 @@ export async function resetAll(): Promise<void> {
   testHooks.beforeSettle = undefined;
   testHooks.afterSettle = undefined;
   testHooks.dropMetaWrite = undefined;
+  resetLimitsForTests();
 }
 
 export const rawFetch = (input: RequestInfo | URL, init?: RequestInit) => SELF.fetch(input as string, init);

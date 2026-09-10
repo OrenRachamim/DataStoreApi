@@ -14,6 +14,7 @@ export interface Env {
   IP_SALT: string;
   CDP_API_KEY_ID?: string;
   CDP_API_KEY_SECRET?: string;
+  PASSWORD_LIMITER?: { limit(opts: { key: string }): Promise<{ success: boolean }> };
 }
 
 export interface Config {
