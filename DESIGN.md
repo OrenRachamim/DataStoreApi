@@ -37,31 +37,66 @@
 
 כל הנתיבים תחת `/v1`. שני דומיינים: `api.` לסוכנים, `dl.` לקישורי שיתוף.
 אימות הבעלים: `Authorization: Bearer <secret>`. תשלום: x402 בכותרת התשלום.
+פרמטרים של בקשה עוברים ב-query או בגוף JSON, לא בכותרות מותאמות. הכותרת
+המותאמת היחידה בבקשה היא `Idempotency-Key`, שהיא מוסכמה מוכרת.
 
 ### תיעוד, חינם
 
 | נתיב | תיאור |
 |---|---|
-| `GET /llms.txt` | הסבר השירות לסוכן בקריאה אחת, כולל המחירים |
+| `GET /llms.txt` | הסבר השירות לסוכן בקריאה אחת: מה זה, מחירים, דוגמת קריאה אחת לכל פעולה |
 | `GET /openapi.json` | מפרט OpenAPI |
+| `GET /tools.json` | הגדרות כלים ל-function calling בפורמט JSON Schema: `store`, `retrieve`, `status`, `extend`. מפתח מעתיק לתוך הסוכן שלו |
+| `GET /v1/pricing` | `{"upload": "0.01", "extend": "0.01", "reads_1000": "0.01", "currency": "USDC", "network": "base", "max_bytes": 26214400, "max_ttl_days": 365, "included_reads": 100}` |
 | `GET /terms` | תנאי שימוש ופרטיות |
 
 ### פריטים
 
 | נתיב | אימות | תשלום | תיאור |
 |---|---|---|---|
-| `POST /v1/items` | אין | $0.01 | העלאה. הגוף הוא התוכן כמו שהוא. כותרות: `Content-Type`, `X-TTL-Days` (1–365, ברירת מחדל 7), `Idempotency-Key`. תשובה 201 עם `id`, `secret`, `expires_at`, `reads_remaining`, `size`, `content_type` |
-| `GET /v1/items/{id}` | סוד | לא, קריאה אחת | התוכן. JSON כ-`application/json`, קובץ כ-attachment. כותרות `X-Reads-Remaining`, `X-Expires-At` |
-| `GET /v1/items/{id}/status` | סוד | לא, לא נספר | `expires_at`, `reads_remaining`, `size`, `content_type`, `has_password`, `created_at` |
+| `POST /v1/items?ttl_days=7&label=...` | אין | $0.01 | העלאה. הגוף הוא התוכן כמו שהוא. `ttl_days` 1–365, ברירת מחדל 7. `label` אופציונלי, עד 100 תווים, לזיהוי הפריט על ידי הסוכן. `Content-Type` אופציונלי: אם חסר או `application/octet-stream`, הסוג מזוהה מהתוכן. כותרת `Idempotency-Key` מומלצת |
+| `GET /v1/items/{id}` | סוד | לא, קריאה אחת | התוכן. JSON כ-`application/json`, קובץ כ-attachment בסוג שזוהה. כותרות `X-Reads-Remaining`, `X-Expires-At` |
+| `GET /v1/items/{id}/status` | סוד | לא, לא נספר | אובייקט הפריט המלא (ראו להלן), בלי `secret` |
 | `DELETE /v1/items/{id}` | סוד | לא | מחיקה מיידית. 204. ללא החזר |
-| `POST /v1/items/{id}/extend` | סוד | $0.01 | גוף `{"ttl_days": N}`. תפוגה חדשה = היום + N, עד 365. תשובה עם `expires_at` |
-| `POST /v1/items/{id}/reads` | אין | $0.01 | מוסיף 1,000 קריאות. תשובה עם `reads_remaining` |
+| `POST /v1/items/{id}/extend` | סוד | $0.01 | גוף `{"ttl_days": N}`. תפוגה חדשה = היום + N, עד 365. מחזיר את אובייקט הפריט |
+| `POST /v1/items/{id}/reads` | אין | $0.01 | מוסיף 1,000 קריאות. מחזיר את אובייקט הפריט |
+
+### אובייקט הפריט
+
+כל תשובת JSON על פריט מחזירה את אותו מבנה, כדי שהסוכן ילמד צורה אחת:
+
+```json
+{
+  "id": "itm_7f3a...",
+  "secret": "sk_...",                 // רק בתשובת ההעלאה, פעם אחת
+  "label": "crawl results 2026-09-10",
+  "content_type": "application/json",
+  "size": 48213,
+  "created_at": "2026-09-10T12:00:00Z",
+  "expires_at": "2026-09-17T12:00:00Z",
+  "reads_remaining": 100,
+  "has_password": false,
+  "links": {
+    "self":    "https://api.../v1/items/itm_7f3a",
+    "status":  "https://api.../v1/items/itm_7f3a/status",
+    "extend":  "https://api.../v1/items/itm_7f3a/extend",
+    "reads":   "https://api.../v1/items/itm_7f3a/reads",
+    "share":   "https://api.../v1/items/itm_7f3a/links",
+    "delete":  "https://api.../v1/items/itm_7f3a"
+  },
+  "payment": {                        // רק אחרי סליקה
+    "amount": "0.01", "currency": "USDC", "network": "base", "tx": "0x..."
+  }
+}
+```
+
+הסוכן עוקב אחרי `links` ולא מרכיב כתובות בעצמו.
 
 ### שיתוף
 
 | נתיב | אימות | תיאור |
 |---|---|---|
-| `POST /v1/items/{id}/links` | סוד | גוף `{"expires_in": seconds}`, עד תפוגת הפריט. תשובה `{"url": "https://dl.../d/{id}?exp=..&gen=..&sig=.."}`. לא נשמר בשרת |
+| `POST /v1/items/{id}/links` | סוד | גוף `{"expires_in": seconds}`, עד תפוגת הפריט. תשובה `{"url": "https://dl.../d/{id}?exp=..&gen=..&sig=..", "expires_at": "..."}`. לא נשמר בשרת |
 | `POST /v1/items/{id}/links/revoke` | סוד | מקדם את מספר הדור. כל הקישורים הקיימים מתבטלים |
 | `PUT /v1/items/{id}/password` | סוד | גוף `{"password": "..."}`, 12–128 תווים. מחליף סיסמה קיימת |
 | `DELETE /v1/items/{id}/password` | סוד | מסיר את הסיסמה |
@@ -76,19 +111,46 @@
 
 כל תשובה מדומיין ההורדות: `Content-Disposition: attachment`, `nosniff`, `no-store`.
 
-### קודי תשובה
+### שגיאות
 
-| קוד | מתי |
-|---|---|
-| 402 | נדרש תשלום: העלאה, הארכה, חבילה, או שליפה כשהמכסה נגמרה. הגוף לפי x402, כולל קישור לתנאים |
-| 404 | פריט לא קיים, פג, סוד שגוי, חתימה לא תקינה או סיסמה שגויה. תשובה אחת לכולם |
-| 413 | גוף מעל 25 MB |
-| 415 | סוג תוכן לא ברשימת ההיתר, או JSON לא תקין |
-| 423 | הפריט נעול לניסיונות סיסמה, עם `Retry-After` |
-| 429 | הגבלת קצב, עם `Retry-After` |
+כל שגיאה מחזירה גוף JSON באותו מבנה. השדה `action` אומר לסוכן מה לעשות עכשיו,
+עם URL מלא כשיש:
+
+```json
+{
+  "error": "reads_exhausted",
+  "message": "This item has no reads left.",
+  "action": {
+    "description": "Buy 1,000 more reads for $0.01 USDC, then retry the request.",
+    "method": "POST",
+    "url": "https://api.../v1/items/itm_7f3a/reads"
+  },
+  "request_id": "req_...",
+  "docs": "https://api.../llms.txt"
+}
+```
+
+| קוד | `error` | מתי | `action` |
+|---|---|---|---|
+| 402 | `payment_required` | העלאה, הארכה, חבילה. הגוף לפי x402 בתוספת השדות למעלה | הסבר איך לשלם, קישור לתנאים, ב-testnet גם קישור ל-faucet |
+| 402 | `reads_exhausted` | שליפה כשהמכסה נגמרה | קנה חבילה בנתיב `reads` |
+| 404 | `not_found` | פריט לא קיים, פג, סוד שגוי, חתימה לא תקינה או סיסמה שגויה. תשובה אחת לכולם | "הפריט לא זמין. אם אתה הבעלים, העלה מחדש" |
+| 409 | `idempotency_conflict` | אותו מפתח idempotency עם גוף שונה | שלח מפתח חדש |
+| 413 | `too_large` | גוף מעל 25 MB | חלק או דחוס לפני העלאה |
+| 415 | `unsupported_type` | סוג לא ברשימת ההיתר, או JSON לא תקין | רשימת הסוגים המותרים בגוף התשובה |
+| 423 | `locked` | נעילת סיסמה, עם `Retry-After` | חכה |
+| 429 | `rate_limited` | הגבלת קצב, עם `Retry-After` ו-`RateLimit-*` | חכה |
 
 כל תשובה כוללת `X-Request-Id`. תשובה אחרי סליקה כוללת את כותרת התשובה של x402
-עם מזהה העסקה.
+עם מזהה העסקה, וגם את `payment` באובייקט הפריט.
+
+### עקרונות ידידות לסוכן
+
+- כל מה שהסוכן צריך להמשך נמצא בתשובה: מזהה, סוד, קישורים מלאים, תפוגה, מכסה.
+- הסוכן לא צריך לדעת MIME, לא צריך להרכיב URL, ולא צריך לנחש מה לעשות אחרי שגיאה.
+- מחירים וגבולות זמינים בנתיב חינם לפני שמשלמים.
+- Testnet מריץ את אותו API בדיוק. סוכן מנסה בלי כסף ועובר ל-mainnet בשינוי דומיין.
+- `tools.json` מאפשר לחבר את השירות לסוכן בלי לקרוא תיעוד.
 
 ## 5. תשלום
 
@@ -157,6 +219,7 @@
 |---|---|
 | גודל מקסימלי לפריט, JSON או קובץ | 25 MB |
 | זמן חיים | 1 עד 365 ימים, ברירת מחדל 7 |
+| תווית (`label`) | עד 100 תווים |
 | סיסמה | 12 עד 128 תווים |
 | ניסיונות סיסמה לפריט | 5 כשלונות ב-15 דקות ואז נעילה של 15 דקות. מצב הנעילה נשמר במטא-דאטה של הפריט |
 | ניסיונות סיסמה ל-IP | 30 בדקה על כל הפריטים, דרך Rate Limiting binding של Workers |
@@ -178,7 +241,7 @@ JSON, טקסט, Markdown, CSV, PDF, PNG, JPEG, WebP, GIF.
 
 - **תוכן:** `items/<id>` – ה-JSON או הקובץ כמו שהוא.
 - **מטא-דאטה:** `meta/<id>` – hash של הסוד (SHA-256, הסוד אקראי וארוך), סוג, גודל,
-  זמן יצירה, `expires_at` מדויק לשנייה, קריאות שנותרו, hash סיסמה אם הוגדרה,
+  תווית, זמן יצירה, `expires_at` מדויק לשנייה, קריאות שנותרו, hash סיסמה אם הוגדרה,
   מצב נעילת סיסמה (מונה כשלונות וזמן), ומספר דור לקישורים חתומים.
 
 **סיסמאות:** PBKDF2-SHA256 דרך WebCrypto, 600,000 איטרציות. לא Argon2, כי הוא
