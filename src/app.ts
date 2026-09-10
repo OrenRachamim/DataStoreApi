@@ -9,6 +9,8 @@ import { docsRoutes } from "./routes/docs";
 import { itemRoutes } from "./routes/items";
 import { shareRoutes } from "./routes/share";
 import { dlRoutes } from "./routes/dl";
+import { feedbackRoutes } from "./routes/feedback";
+import { checkLimit, clientIp } from "./limits";
 
 export type Variables = {
   config: Config;
@@ -40,6 +42,10 @@ export function createApp() {
     const isDlPath = reqUrl.pathname.startsWith("/d/");
     if (isDl !== isDlPath) {
       throw new ApiError(404, "not_found", "No such route on this host.", { description: "API routes live on the API origin; share links on the share origin.", method: "GET", url: `${config.apiOrigin}/llms.txt` });
+    }
+    // General per-address limit: generous, and only a backstop against runaway loops.
+    if (!(await checkLimit(c.env.API_LIMITER, "api", clientIp(c.req.raw), { limit: 600, periodSeconds: 60 }))) {
+      throw new ApiError(429, "rate_limited", "Too many requests from this address.", { description: "Slow down and retry after the indicated delay." }, undefined, { "Retry-After": "60", "RateLimit-Limit": "600", "RateLimit-Remaining": "0" });
     }
     await next();
     c.header("X-Request-Id", requestId);
@@ -84,6 +90,7 @@ export function createApp() {
   itemRoutes(app);
   shareRoutes(app);
   dlRoutes(app);
+  feedbackRoutes(app);
 
   // Method not allowed for known collection paths.
   app.all("/v1/items", (c) => {

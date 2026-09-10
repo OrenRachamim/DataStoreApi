@@ -114,6 +114,8 @@ export async function resetAll(): Promise<void> {
   testHooks.beforeSettle = undefined;
   testHooks.afterSettle = undefined;
   testHooks.dropMetaWrite = undefined;
+  testHooks.beforeExpiryDelete = undefined;
+  testHooks.forceRateLimit = undefined;
   resetLimitsForTests();
 }
 

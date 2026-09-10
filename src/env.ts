@@ -15,6 +15,7 @@ export interface Env {
   CDP_API_KEY_ID?: string;
   CDP_API_KEY_SECRET?: string;
   PASSWORD_LIMITER?: { limit(opts: { key: string }): Promise<{ success: boolean }> };
+  API_LIMITER?: { limit(opts: { key: string }): Promise<{ success: boolean }> };
 }
 
 export interface Config {

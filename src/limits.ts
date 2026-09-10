@@ -11,6 +11,8 @@ export interface LimitSpec {
   periodSeconds: number;
 }
 
+import { testHooks } from "./hooks";
+
 const memory = new Map<string, { count: number; windowStart: number }>();
 
 export function resetLimitsForTests(): void {
@@ -18,6 +20,7 @@ export function resetLimitsForTests(): void {
 }
 
 export async function checkLimit(binding: RateLimiterBinding | undefined, name: string, key: string, spec: LimitSpec): Promise<boolean> {
+  if (testHooks.forceRateLimit?.(name)) return false;
   if (binding) {
     const { success } = await binding.limit({ key: `${name}:${key}` });
     return success;
