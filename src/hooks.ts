@@ -6,4 +6,6 @@ export const testHooks: {
   beforeStore?: (itemId: string) => Promise<void> | void;
   beforeSettle?: (itemId: string) => Promise<void> | void;
   afterSettle?: (itemId: string) => Promise<void> | void;
+  /** Return true to make one conditional metadata write behave as if it lost the race. */
+  dropMetaWrite?: (meta: unknown) => boolean;
 } = {};

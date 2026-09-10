@@ -1,4 +1,5 @@
 import type { ContentKind } from "./content";
+import { testHooks } from "./hooks";
 
 export interface PasswordHash {
   salt: string; // base64url
@@ -29,6 +30,8 @@ export interface Meta {
   tx?: string;
   payer?: string;
   lastPayment?: { type: "upload" | "extend" | "reads"; tx: string; payer: string; amount: string; at: string };
+  /** Transactions already applied to this item, so a replayed settlement is never applied twice. */
+  appliedTx?: string[];
 }
 
 export interface IdemRecord {
@@ -39,6 +42,8 @@ export interface IdemRecord {
   /** Set as soon as the facilitator settled, before metadata is finalised. */
   tx?: string;
   amount?: string;
+  /** Which paid operation this record belongs to. Upload when absent. */
+  op?: "extend" | "reads";
 }
 
 export const KEYS = {
@@ -97,6 +102,7 @@ export async function updateMeta(
     if (!cur) return null;
     const draft: Meta = structuredClone(cur.meta);
     if (mutate(draft) === false) return null;
+    if (testHooks.dropMetaWrite?.(draft)) continue;
     if (await writeMeta(bucket, draft, cur.etag)) return draft;
   }
   throw new Error(`updateMeta: too many conflicts on ${id}`);

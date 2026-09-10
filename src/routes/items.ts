@@ -4,6 +4,8 @@ import { detectContent, normalizeDeclaredType, UnsupportedContent, ALLOWED_TYPES
 import { ApiError, notFound } from "../errors";
 import { decryptString, encryptString, ITEM_ID_RE, newItemId, newSecret, sha256Hex, timingSafeEqual } from "../ids";
 import { addDays, isExpired, itemObject } from "../items";
+import { paidMetaOperation } from "./paid";
+import { deleteExpiryMarker } from "../store";
 import { logEvent } from "../log";
 import { testHooks } from "../hooks";
 import { PAYMENT_REQUIRED_HEADER, PAYMENT_RESPONSE_HEADER, PAYMENT_SIGNATURE_HEADER, PaymentError, type ParsedPayment } from "../payment";
@@ -165,6 +167,8 @@ export function itemRoutes(app: Hono<AppContext>): void {
   app.get("/v1/items/:id", retrieveHandler);
   app.get("/v1/items/:id/status", statusHandler);
   app.delete("/v1/items/:id", deleteHandler);
+  app.post("/v1/items/:id/extend", extendHandler);
+  app.post("/v1/items/:id/reads", readsHandler);
 }
 
 async function uploadHandler(c: Ctx): Promise<Response> {
@@ -355,20 +359,33 @@ async function retrieveHandler(c: Ctx): Promise<Response> {
   const meta = cur.meta;
   c.get("logFields").access = "secret";
 
+  let servedMeta = meta;
+  let paymentResponseHeader: string | undefined;
   if (meta.readsRemaining <= 0) {
-    // Stage 3 adds pay-on-read here. For now the 402 is x402-formatted so
-    // clients know exactly what to pay and where.
+    // Pay-on-read: an x402 client pays on this same request, gets a read pack
+    // applied and the content in one round. Without payment: an x402 402.
     const url = `${cfg.apiOrigin}/v1/items/${id}`;
-    await requirePayment(c, {
+    const action = { description: `Pay $${cfg.priceUsd} USDC on this request, or buy ${cfg.readPackSize} reads in advance at the reads URL, then retry.`, method: "POST", url: `${url}/reads` };
+    if (!c.req.header(PAYMENT_SIGNATURE_HEADER)) {
+      try {
+        await requirePayment(c, { description: `Add ${cfg.readPackSize} reads to item ${id}`, timeoutSeconds: cfg.otherTimeoutSeconds, code: "reads_exhausted", message: "This item has no reads left.", action });
+      } catch (err) {
+        if (err instanceof ApiError) throw new ApiError(err.status, err.code, err.message, err.action, { ...err.extra, expires_at: meta.expiresAt }, err.headers);
+        throw err;
+      }
+    }
+    const result = await paidMetaOperation(c, {
+      itemId: id,
+      op: "reads",
       description: `Add ${cfg.readPackSize} reads to item ${id}`,
-      timeoutSeconds: cfg.otherTimeoutSeconds,
-      code: "reads_exhausted",
-      message: "This item has no reads left.",
-      action: { description: `Pay $${cfg.priceUsd} USDC on this request, or buy ${cfg.readPackSize} reads in advance at the reads URL, then retry.`, method: "POST", url: `${url}/reads` },
+      apply: (m) => {
+        m.readsRemaining += cfg.readPackSize;
+      },
     });
-    throw new ApiError(402, "reads_exhausted", "This item has no reads left.", { description: `Buy ${cfg.readPackSize} reads at the reads URL, then retry.`, method: "POST", url: `${url}/reads` }, { expires_at: meta.expiresAt });
+    servedMeta = result.meta;
+    paymentResponseHeader = result.paymentResponseHeader;
+    c.get("logFields").paid_read = true;
   }
-
   const obj = await getItemContent(bucket, id);
   if (!obj) throw notFound();
 
@@ -382,8 +399,8 @@ async function retrieveHandler(c: Ctx): Promise<Response> {
   const headers = new Headers();
   headers.set("Content-Type", meta.contentType);
   headers.set("Content-Length", String(meta.size));
-  headers.set("X-Reads-Remaining", String(meta.readsRemaining - 1));
-  headers.set("X-Expires-At", meta.expiresAt);
+  headers.set("X-Reads-Remaining", String(servedMeta.readsRemaining - 1));
+  headers.set("X-Expires-At", servedMeta.expiresAt);
   headers.set("X-Content-Type-Options", "nosniff");
   headers.set("Cache-Control", "no-store");
   if (meta.kind === "binary" || meta.kind === "text") {
@@ -391,6 +408,7 @@ async function retrieveHandler(c: Ctx): Promise<Response> {
   } else if (meta.kind === "html" || meta.kind === "svg") {
     headers.set("Content-Security-Policy", "sandbox allow-scripts allow-forms allow-popups");
   }
+  if (paymentResponseHeader) headers.set(PAYMENT_RESPONSE_HEADER, paymentResponseHeader);
   return new Response(obj.body, { status: 200, headers });
 }
 
@@ -409,6 +427,57 @@ export function extensionFor(contentType: string): string {
     "image/gif": ".gif",
   };
   return map[contentType] ?? "";
+}
+
+async function extendHandler(c: Ctx): Promise<Response> {
+  const cfg = c.get("config");
+  const cur = await loadOwnedItem(c, c.req.param("id") as string);
+  let body: { ttl_days?: unknown };
+  try {
+    body = (await c.req.json()) as { ttl_days?: unknown };
+  } catch {
+    throw invalid("Body must be JSON like {\"ttl_days\": 30}.");
+  }
+  const raw = body?.ttl_days;
+  if (typeof raw !== "number" || !Number.isInteger(raw)) throw invalid(`ttl_days must be an integer between 1 and ${cfg.maxTtlDays}.`, { ttl_days: raw });
+  const ttlDays = parseTtlDays(String(raw), c);
+  const now = Date.now();
+  const newExpiry = addDays(now, ttlDays);
+  if (Date.parse(newExpiry) <= Date.parse(cur.meta.expiresAt)) {
+    throw invalid(`The new expiry ${newExpiry} is not later than the current expiry. Nothing was charged.`, { expires_at: cur.meta.expiresAt, requested_expires_at: newExpiry });
+  }
+  const oldExpiry = cur.meta.expiresAt;
+  const result = await paidMetaOperation(c, {
+    itemId: cur.meta.id,
+    op: "extend",
+    description: `Extend item ${cur.meta.id} to ${newExpiry}`,
+    apply: (m) => {
+      if (Date.parse(newExpiry) > Date.parse(m.expiresAt)) m.expiresAt = newExpiry;
+    },
+    after: async (m) => {
+      await putExpiryMarker(c.env.BUCKET, m.expiresAt, m.id);
+      if (m.expiresAt !== oldExpiry) await deleteExpiryMarker(c.env.BUCKET, oldExpiry, m.id);
+    },
+  });
+  return c.json(itemObject(cfg, result.meta, { payment: { tx: result.tx, amount: formatUsdc(result.amount) } }));
+}
+
+async function readsHandler(c: Ctx): Promise<Response> {
+  const cfg = c.get("config");
+  const id = c.req.param("id") as string;
+  if (!ITEM_ID_RE.test(id)) throw notFound();
+  const cur = await readMeta(c.env.BUCKET, id);
+  if (!cur || isExpired(cur.meta)) throw notFound();
+  c.get("logFields").item_id = id;
+  const result = await paidMetaOperation(c, {
+    itemId: id,
+    op: "reads",
+    description: `Add ${cfg.readPackSize} reads to item ${id}`,
+    apply: (m) => {
+      m.readsRemaining += cfg.readPackSize;
+    },
+  });
+  return c.json(itemObject(cfg, result.meta, { payment: { tx: result.tx, amount: formatUsdc(result.amount) } }));
 }
 
 async function statusHandler(c: Ctx): Promise<Response> {

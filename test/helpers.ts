@@ -111,6 +111,7 @@ export async function resetAll(): Promise<void> {
   testHooks.beforeStore = undefined;
   testHooks.beforeSettle = undefined;
   testHooks.afterSettle = undefined;
+  testHooks.dropMetaWrite = undefined;
 }
 
 export const rawFetch = (input: RequestInfo | URL, init?: RequestInit) => SELF.fetch(input as string, init);
