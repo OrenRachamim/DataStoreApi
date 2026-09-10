@@ -1,0 +1,8 @@
+<html><body><h1 id="h">pending</h1><script>
+var out = {};
+try { document.cookie = "probe=1"; out.cookieSet = "allowed"; out.cookie = document.cookie; } catch (e) { out.cookieSet = "blocked:" + e.name; }
+try { out.localStorage = String(localStorage.length); } catch (e) { out.localStorage = "blocked:" + e.name; }
+try { out.origin = location.origin; out.windowOrigin = window.origin; } catch (e) { out.origin = "err:" + e.name; }
+out.scriptRan = true;
+document.getElementById("h").textContent = JSON.stringify(out);
+</script></body></html>

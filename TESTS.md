@@ -199,7 +199,7 @@
 | LNK-01 | יצירה | `POST .../links {expires_in: 3600}` עם סוד | 200, `url` בדומיין השיתוף עם `exp`, `gen`, `sig`, `expires_at` = עכשיו + שעה |
 | LNK-02 | שליפה בקישור | `GET url` | 200, תוכן, קריאה נספרת |
 | LNK-03 | תפוגת קישור | שעון + שעה + שנייה | 404 |
-| LNK-04 | expires_in מעבר לפריט | פריט 1 יום, `expires_in` = יומיים | 400, או קיצור ל-`expires_at` של הפריט. לבחור ולתעד, ולבדוק |
+| LNK-04 | expires_in מעבר לפריט | פריט 1 יום, `expires_in` = יומיים | קיצור ל-`expires_at` של הפריט, `clamped_to_item_expiry` = true |
 | LNK-05 | חתימה שונתה | שינוי תו ב-`sig` | 404 |
 | LNK-06 | exp שונה | הגדלת `exp` בלי חתימה מחדש | 404 |
 | LNK-07 | gen ישן | יצירת קישור, `revoke`, GET | 404 |
@@ -238,7 +238,7 @@
 |---|---|---|---|
 | DL-01 | HTML inline | קישור חתום ל-`valid.html` | 200, `text/html`, **בלי** attachment |
 | DL-02 | CSP sandbox | כל תשובת HTML ו-SVG | `Content-Security-Policy: sandbox allow-scripts allow-forms allow-popups`, בלי `allow-same-origin` |
-| DL-03 | סקריפט לא מגיע ל-cookies | `script.html` בדפדפן (Playwright) | הסקריפט רץ, `document.cookie` ריק, `localStorage` זורק, `origin` = `null` |
+| DL-03 | סקריפט לא מגיע ל-cookies | `script.html` בדפדפן (Playwright, מול `wrangler dev`). לא רץ ב-vitest אלא בשלב 6 | הסקריפט רץ, `document.cookie` ריק, `localStorage` זורק, `origin` = `null` |
 | DL-04 | SVG inline | `script.svg` | כמו DL-01 ו-DL-03 |
 | DL-05 | שאר קבצים attachment | PNG, PDF, CSV בקישור | `Content-Disposition: attachment; filename=...` |
 | DL-06 | כותרות בסיס | כל תשובה מהדומיין | `nosniff`, `Cache-Control: no-store`, `Referrer-Policy: no-referrer` |
@@ -254,7 +254,7 @@
 | EXP-02 | מחיקה פיזית | `runCron(מחר)` | items, meta, marker נמחקו |
 | EXP-03 | cron לא מוחק מוקדם | פריט שהוארך, סימון ישן נשאר בכוונה, `runCron` על התאריך הישן | הפריט **נשאר**, הסימון הישן נמחק, לוג: "skipped, not expired" |
 | EXP-04 | cron על יום ריק | | מסתיים בהצלחה, לוג עם 0 |
-| EXP-05 | cron על אלף פריטים | 1,000 פריטים לאותו יום | כולם נמחקים, עימוד של R2 מטופל, זמן ריצה נרשם |
+| EXP-05 | cron על הרבה פריטים | 40 פריטים לאותו יום עם עמודי רשימה של 7 | כולם נמחקים, העימוד מטופל, זמן ריצה נרשם |
 | EXP-06 | cron עמיד לכשל | מחיקה אחת זורקת | השאר נמחקים, הכשל בלוג, הריצה הבאה מנקה |
 | EXP-07 | רשומות idempotency | רשומה בת יומיים | נמחקה |
 | EXP-08 | דיוק לשנייה | פריט שנוצר ב-23:59:30 עם יום אחד | `expires_at` = מחר 23:59:30, סימון תחת תאריך מחר |
@@ -277,8 +277,8 @@
 | מזהה | תיאור | צעדים | צפוי |
 |---|---|---|---|
 | RL-01 | סיסמה לכל IP | 31 ניסיונות בדקה מאותו IP על פריטים שונים | ה-31 מחזיר 429 עם `Retry-After` ו-`RateLimit-*` |
-| RL-02 | פידבק לכל IP | 6 דיווחים בשעה | ה-6 מחזיר 429 |
-| RL-03 | קצב כללי | לפי הערך שייקבע | 429, ולא משפיע על IP אחר |
+| RL-02 | פידבק לכל IP | 6 דיווחים בשעה | ה-6 מחזיר 429 עם `Retry-After: 3600` |
+| RL-03 | קצב כללי | 600 בדקה: בדיקת יחידה של המונה, ובדיקה שה-API מחזיר 429 עם הכותרות כשהמגבלה נכפית | 429, ולא משפיע על IP אחר |
 | RL-04 | 429 לא נספר | 429 על שליפה | המונה לא ירד |
 
 ### 2.15 פידבק (FB)
@@ -361,7 +361,7 @@
 | 3. תשלומים נוספים | EXT-*, RD-*, IDEM-11 |
 | 4. שיתוף | LNK-*, PWD-*, DL-*, LOG-03, LOG-04, RL-01 |
 | 5. תפעול | EXP-*, FB-*, RL-02..04, LOG-07, LOG-09, TN-* |
-| 6. סיום | PERF-*, E2E-* |
+| 6. סיום | PERF-*, DL-03 בדפדפן, אימות מול ה-facilitator האמיתי, E2E-* (דורש ארנק עם USDC ב-testnet) |
 
 כלל: שלב לא נסגר עם בדיקה אדומה, ובדיקה לא מדולגת ולא מסומנת skip כדי לסגור שלב.
 בדיקה שמתגלה כלא נכונה מול DESIGN מתוקנת יחד עם עדכון DESIGN, לא לבד.
@@ -380,3 +380,18 @@
 - [ ] תהליך ההסרה מתועד: מי קורא דיווחי abuse ותוך כמה זמן.
 - [ ] Cron רץ בהצלחה שלושה ימים רצופים ב-testnet.
 - [ ] גיבוי של קונפיגורציית wrangler והסודות במקום מאובטח.
+
+---
+
+## 6. תוצאות בדיקות חיות (שלב 6)
+
+בוצעו מקומית מול `wrangler dev`, בנוסף ל-vitest:
+
+| בדיקה | איך | תוצאה |
+|---|---|---|
+| חיבור ל-facilitator האמיתי | `scripts/facilitator-check.mjs` מול `https://x402.org/facilitator` | `initialize` הצליח, הדרישות שנבנו: 10000 יחידות USDC על Base Sepolia עם `name`/`version` נכונים, ה-payload תואם, ו-verify של ארנק ריק נכשל ב-`invalid_exact_evm_insufficient_balance` אחרי סימולציה אמיתית על הרשת |
+| DL-03 בדפדפן אמיתי | `scripts/browser-sandbox-check.mjs` עם Chromium headless על קישור חתום ל-`scripts/sandbox-probe.html` | `{"cookieSet":"blocked:SecurityError","localStorage":"blocked:SecurityError","windowOrigin":"null","scriptRan":true}` |
+| PERF-01..05 | vitest | p95 של שליפה קטנה מתחת ל-200ms, 50 העלאות מקביליות מ-50 ארנקים, 200 שליפות מקביליות, שני JSON של 20 MB במקביל |
+
+**מה עדיין לא בוצע:** E2E-01..10 דורשים פריסה אמיתית וארנק בדיקה עם USDC ב-Base Sepolia.
+מנגנון התשלום מולו נבדק (verify אמיתי), אבל סליקה אמיתית עדיין לא.

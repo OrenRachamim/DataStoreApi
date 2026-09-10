@@ -32,7 +32,7 @@ export function createApp() {
     const config = configFromEnv(c.env);
     c.set("requestId", requestId);
     c.set("config", config);
-    c.set("payments", createPaymentService(config));
+    c.set("payments", createPaymentService(config, { apiKeyId: c.env.CDP_API_KEY_ID, apiKeySecret: c.env.CDP_API_KEY_SECRET }));
     c.set("logFields", {});
     const reqUrl = new URL(c.req.url);
     const isDl = reqUrl.host === new URL(config.dlOrigin).host && reqUrl.host !== new URL(config.apiOrigin).host;

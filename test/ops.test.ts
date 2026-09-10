@@ -271,3 +271,16 @@ describe("limits and logs (RL, LOG, TN)", () => {
     expect(configFromEnv({ NETWORK: "eip155:8453" } as never).isTestnet).toBe(false);
   });
 });
+
+describe("mainnet facilitator auth", () => {
+  it("builds an authenticated facilitator client when CDP keys are present", async () => {
+    const { facilitatorClientFor } = await import("../src/payment");
+    const { configFromEnv } = await import("../src/env");
+    const cfg = configFromEnv({ NETWORK: "eip155:8453", FACILITATOR_URL: "https://api.cdp.coinbase.com/platform/v2/x402" } as never);
+    const client = facilitatorClientFor(cfg, { apiKeyId: "organizations/x/apiKeys/y", apiKeySecret: "not-a-real-key" });
+    expect(client.url).toBe("https://api.cdp.coinbase.com/platform/v2/x402");
+    expect(typeof client.createAuthHeaders).toBe("function");
+    const plain = facilitatorClientFor(cfg, {});
+    expect(plain.url).toBe("https://api.cdp.coinbase.com/platform/v2/x402");
+  });
+});

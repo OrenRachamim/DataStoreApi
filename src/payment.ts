@@ -2,6 +2,7 @@ import { HTTPFacilitatorClient, x402ResourceServer, type FacilitatorClient } fro
 import { decodePaymentSignatureHeader, encodePaymentRequiredHeader, encodePaymentResponseHeader } from "@x402/core/http";
 import type { PaymentPayload, PaymentRequired, PaymentRequirements, SettleResponse } from "@x402/core/types";
 import { ExactEvmScheme } from "@x402/evm/exact/server";
+import { createFacilitatorConfig } from "@coinbase/x402";
 import { authorizationTypes } from "@x402/evm";
 import { getAddress, recoverTypedDataAddress, type Hex } from "viem";
 import type { Config } from "./env";
@@ -37,11 +38,11 @@ export function setFacilitatorForTests(client: FacilitatorClient | undefined): v
 
 const servers = new Map<string, { server: x402ResourceServer; ready: Promise<void> }>();
 
-function serverFor(config: Config): { server: x402ResourceServer; ready: Promise<void> } {
+function serverFor(config: Config, cdp?: { apiKeyId?: string; apiKeySecret?: string }): { server: x402ResourceServer; ready: Promise<void> } {
   const key = `${config.facilitatorUrl}|${config.network}`;
   let entry = servers.get(key);
   if (!entry) {
-    const client = facilitatorOverride ?? new HTTPFacilitatorClient({ url: config.facilitatorUrl });
+    const client = facilitatorOverride ?? facilitatorClientFor(config, cdp);
     const server = new x402ResourceServer(client).register(config.network as `${string}:${string}`, new ExactEvmScheme());
     const ready = server.initialize().catch((err) => {
       servers.delete(key);
@@ -53,6 +54,18 @@ function serverFor(config: Config): { server: x402ResourceServer; ready: Promise
   return entry;
 }
 
+/**
+ * Facilitator HTTP client. With CDP API keys (mainnet) the Coinbase facilitator
+ * requires signed auth headers; the public testnet facilitator needs none.
+ */
+export function facilitatorClientFor(config: Config, cdp?: { apiKeyId?: string; apiKeySecret?: string }): HTTPFacilitatorClient {
+  if (cdp?.apiKeyId && cdp.apiKeySecret) {
+    const fc = createFacilitatorConfig(cdp.apiKeyId, cdp.apiKeySecret);
+    return new HTTPFacilitatorClient({ ...fc, url: config.facilitatorUrl || fc.url });
+  }
+  return new HTTPFacilitatorClient({ url: config.facilitatorUrl });
+}
+
 export interface PaymentService {
   requirements(resourceUrl: string, timeoutSeconds: number): Promise<PaymentRequirements[]>;
   paymentRequired(resourceUrl: string, description: string, timeoutSeconds: number, error?: string): Promise<{ header: string; body: PaymentRequired }>;
@@ -62,8 +75,8 @@ export interface PaymentService {
   responseHeader(settle: SettleResponse): string;
 }
 
-export function createPaymentService(config: Config): PaymentService {
-  const { server, ready } = serverFor(config);
+export function createPaymentService(config: Config, cdp?: { apiKeyId?: string; apiKeySecret?: string }): PaymentService {
+  const { server, ready } = serverFor(config, cdp);
 
   const requirements = async (resourceUrl: string, timeoutSeconds: number): Promise<PaymentRequirements[]> => {
     await ready;
