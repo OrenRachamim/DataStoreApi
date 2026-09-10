@@ -1,0 +1,25 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "datastore-api",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-08-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "observability": {
+    "logs": { "enabled": true, "invocation_logs": false }
+  },
+  "r2_buckets": [
+    { "binding": "BUCKET", "bucket_name": "datastore-items" }
+  ],
+  "triggers": { "crons": ["15 1 * * *"] },
+  "vars": {
+    "NETWORK": "eip155:84532",
+    "PAY_TO": "0x0000000000000000000000000000000000000001",
+    "FACILITATOR_URL": "https://x402.org/facilitator",
+    "API_ORIGIN": "http://localhost:8787",
+    "DL_ORIGIN": "http://localhost:8788",
+    "MAX_BYTES": "26214400",
+    "MAX_TTL_DAYS": "365",
+    "DEFAULT_TTL_DAYS": "7",
+    "SERVICE_NAME": "DataStore API"
+  }
+}
