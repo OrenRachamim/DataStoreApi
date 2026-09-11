@@ -393,5 +393,24 @@
 | DL-03 בדפדפן אמיתי | `scripts/browser-sandbox-check.mjs` עם Chromium headless על קישור חתום ל-`scripts/sandbox-probe.html` | `{"cookieSet":"blocked:SecurityError","localStorage":"blocked:SecurityError","windowOrigin":"null","scriptRan":true}` |
 | PERF-01..05 | vitest | p95 של שליפה קטנה מתחת ל-200ms, 50 העלאות מקביליות מ-50 ארנקים, 200 שליפות מקביליות, שני JSON של 20 MB במקביל |
 
-**מה עדיין לא בוצע:** E2E-01..10 דורשים פריסה אמיתית וארנק בדיקה עם USDC ב-Base Sepolia.
-מנגנון התשלום מולו נבדק (verify אמיתי), אבל סליקה אמיתית עדיין לא.
+### פריסת testnet (2026-09-11)
+
+שני Workers על workers.dev לפי DEPLOY.md, bucket `datastore-items-testnet`, סודות משותפים
+בשני ה-Workers, `PAY_TO` נמסר כ-var בפריסה (לא בקוד). כתובות:
+`https://datastore-api-testnet.orenrachamim.workers.dev` (API) ו-
+`https://datastore-share-testnet.orenrachamim.workers.dev` (share).
+
+| בדיקה | איך | תוצאה |
+|---|---|---|
+| vitest לפני פריסה | `npm test` | 175/175 עברו |
+| DOC-04 בפריסה | `GET /v1/pricing` | 200, `network` = `base-sepolia`, `max_bytes` = 1048576, `max_ttl_days` = 7 (גבולות testnet) |
+| DOC-01 בפריסה | `GET /llms.txt` | 200, הדוגמאות מצביעות על כתובת ה-API האמיתית של testnet |
+| UP-01 בפריסה | `POST /v1/items?ttl_days=1` בלי תשלום | 402, כותרת `PAYMENT-REQUIRED`, `payTo` = הארנק שנמסר בפריסה, סכום 10000 על `eip155:84532` |
+| GET-* בדומיין השיתוף | `GET /d/itm_xxxxxxxxxxxxxxxxxxxxxx` בדומיין share | 404 JSON עם `X-Request-Id` |
+| חיבור ל-facilitator | `scripts/facilitator-check.mjs` | כמו למעלה: verify של ארנק ריק נכשל ב-`insufficient_balance` |
+
+**מה עדיין לא בוצע:** E2E-01..10 דורשים ארנק בדיקה עם USDC ב-Base Sepolia מה-faucet של Circle
+(פעולה ידנית בדפדפן). הפריסה קיימת, אז ברגע שיש ארנק ממומן מריצים
+`API=... E2E_PRIVATE_KEY=0x... NODE_USE_ENV_PROXY=1 node scripts/e2e.mjs`.
+מנגנון התשלום נבדק (verify אמיתי), אבל סליקה אמיתית עדיין לא. בדיקת ה-cron (`expiry_sweep`)
+בלוגים אחרי שלושה ימים גם ממתינה.
