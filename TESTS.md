@@ -420,9 +420,13 @@
 | E2E-07 extend | PASS, tx `0x9c59420458b876e8c07ee86f6b917c21c78f7ec84de8d96bb8284f4ec00961e6` |
 | E2E-07 read pack | PASS, `reads_remaining` 1099, tx `0xa43297abeb286133486aecd36f1b3feabacaccff0bc300b4724043e2c461195a` |
 | share link | PASS, הקישור החתום נפתח בדומיין share |
-| E2E-06 idempotent replay | בריצה המלאה נכשל ב-`fetch failed` (שגיאת רשת בצד הלקוח). בריצה חוזרת מבודדת, שלושה סבבים: שניים החזירו אותו `id` ואותו `payment.tx` ב-replay, כלומר בלי חיוב כפול. בסבב השלישי הבקשה הראשונה קיבלה 402 עם "Payment settlement failed: RPC Request failed" מ-`sepolia.base.org` דרך ה-facilitator, לא נשמר פריט ולא נגבה תשלום (התנהגות PAY-02), והבקשה הבאה עם אותו מפתח יצרה פריט חדש כראוי. PASS |
+| E2E-06 idempotent replay | PASS בריצה מלאה שנייה: ה-replay החזיר אותו `id` ואותו `payment.tx` (`0x22b76fe51714cc94bfef1057ea67aeeac54db0b98931fd2389857de9787eb5eb`), בלי חיוב כפול. בריצה הראשונה נפל ב-`fetch failed` (שגיאת רשת בצד הלקוח, לא חזרה). בבדיקה מבודדת נצפה גם 402 עם "Payment settlement failed: RPC Request failed" מ-`sepolia.base.org` דרך ה-facilitator: לא נשמר פריט ולא נגבה תשלום (התנהגות PAY-02), והבקשה הבאה עם אותו מפתח יצרה פריט חדש כראוי |
 | feedback | PASS |
 | אימות על השרשרת | יתרת USDC של `PAY_TO` אחרי הריצות: 0.08, בדיוק שמונה קריאות משולמות מוצלחות. סליקה שנכשלה לא חייבה |
+
+ריצות מלאות: ריצה 1 עברה 8/9 (E2E-06 נפל ב-`fetch failed`), ריצה 2 נפלה כבר ב-E2E-01 עם
+`fetch failed` לפני שנשלחה בקשה מוצלחת, ריצה 3 עברה 9/9. ה-`fetch failed` הוא כשל רשת
+לסירוגין בצד הלקוח (ה-API וה-facilitator ענו 200 ב-curl מיד אחריו) ולא תשובה מהשרת.
 
 הערה: ה-RPC הציבורי של Base Sepolia שה-facilitator הציבורי משתמש בו נכשל לסירוגין. ה-Worker
 מחזיר במקרה כזה 402 עם ההסבר ולקוח x402 פשוט מנסה שוב. ב-production ה-facilitator של CDP.
