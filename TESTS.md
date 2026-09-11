@@ -409,8 +409,23 @@
 | GET-* בדומיין השיתוף | `GET /d/itm_xxxxxxxxxxxxxxxxxxxxxx` בדומיין share | 404 JSON עם `X-Request-Id` |
 | חיבור ל-facilitator | `scripts/facilitator-check.mjs` | כמו למעלה: verify של ארנק ריק נכשל ב-`insufficient_balance` |
 
-**מה עדיין לא בוצע:** E2E-01..10 דורשים ארנק בדיקה עם USDC ב-Base Sepolia מה-faucet של Circle
-(פעולה ידנית בדפדפן). הפריסה קיימת, אז ברגע שיש ארנק ממומן מריצים
-`API=... E2E_PRIVATE_KEY=0x... NODE_USE_ENV_PROXY=1 node scripts/e2e.mjs`.
-מנגנון התשלום נבדק (verify אמיתי), אבל סליקה אמיתית עדיין לא. בדיקת ה-cron (`expiry_sweep`)
-בלוגים אחרי שלושה ימים גם ממתינה.
+### E2E עם USDC אמיתי על Base Sepolia (2026-09-11)
+
+`scripts/e2e.mjs` עם ארנק משלם שמומן מה-faucet של Circle, מול ה-facilitator הציבורי.
+
+| בדיקה | תוצאה |
+|---|---|
+| E2E-01 upload JSON | PASS, tx `0x8e4ccf5ba3c357250464a0b160299c81eddc8a8254d110d001a8e00abfd31931` (block 46672835, status success) |
+| E2E-01 retrieve / status / delete | PASS |
+| E2E-07 extend | PASS, tx `0x9c59420458b876e8c07ee86f6b917c21c78f7ec84de8d96bb8284f4ec00961e6` |
+| E2E-07 read pack | PASS, `reads_remaining` 1099, tx `0xa43297abeb286133486aecd36f1b3feabacaccff0bc300b4724043e2c461195a` |
+| share link | PASS, הקישור החתום נפתח בדומיין share |
+| E2E-06 idempotent replay | בריצה המלאה נכשל ב-`fetch failed` (שגיאת רשת בצד הלקוח). בריצה חוזרת מבודדת, שלושה סבבים: שניים החזירו אותו `id` ואותו `payment.tx` ב-replay, כלומר בלי חיוב כפול. בסבב השלישי הבקשה הראשונה קיבלה 402 עם "Payment settlement failed: RPC Request failed" מ-`sepolia.base.org` דרך ה-facilitator, לא נשמר פריט ולא נגבה תשלום (התנהגות PAY-02), והבקשה הבאה עם אותו מפתח יצרה פריט חדש כראוי. PASS |
+| feedback | PASS |
+| אימות על השרשרת | יתרת USDC של `PAY_TO` אחרי הריצות: 0.08, בדיוק שמונה קריאות משולמות מוצלחות. סליקה שנכשלה לא חייבה |
+
+הערה: ה-RPC הציבורי של Base Sepolia שה-facilitator הציבורי משתמש בו נכשל לסירוגין. ה-Worker
+מחזיר במקרה כזה 402 עם ההסבר ולקוח x402 פשוט מנסה שוב. ב-production ה-facilitator של CDP.
+
+**מה עדיין לא בוצע:** E2E-02..05 ו-E2E-08..10 (הסקריפט מכסה חלק מהמזהים). בדיקת ה-cron
+(`expiry_sweep`) בלוגים אחרי שלושה ימים ממתינה.
