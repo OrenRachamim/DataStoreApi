@@ -1,6 +1,7 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "datastore-api",
+  "account_id": "ccda1018431c9d935588b68f06478ba9",
   "main": "src/index.ts",
   "compatibility_date": "2026-08-01",
   "compatibility_flags": ["nodejs_compat"],
