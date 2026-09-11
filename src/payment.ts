@@ -36,22 +36,49 @@ export function setFacilitatorForTests(client: FacilitatorClient | undefined): v
   servers.clear();
 }
 
-const servers = new Map<string, { server: x402ResourceServer; ready: Promise<void> }>();
+/**
+ * Initialized servers, cached per isolate. Only a *finished* initialization is cached:
+ * a pending promise created inside one request must never be awaited by another, because
+ * Workers cancel a request's I/O and timers when that request ends, and a promise stranded
+ * that way never settles and would hang every later request on the isolate.
+ */
+const servers = new Map<string, x402ResourceServer>();
 
-function serverFor(config: Config, cdp?: { apiKeyId?: string; apiKeySecret?: string }): { server: x402ResourceServer; ready: Promise<void> } {
-  const key = `${config.facilitatorUrl}|${config.network}`;
-  let entry = servers.get(key);
-  if (!entry) {
+/**
+ * A fresh isolate must learn the facilitator's supported kinds before it can build a 402.
+ * That single fetch occasionally stalls; the x402 client would wait 30 s. So each attempt
+ * gets its own server object and a short deadline, and a stalled attempt is abandoned.
+ */
+export const FACILITATOR_INIT_TIMEOUT_MS = 5_000;
+export const FACILITATOR_INIT_ATTEMPTS = 3;
+
+async function initializeServer(config: Config, cdp?: { apiKeyId?: string; apiKeySecret?: string }): Promise<x402ResourceServer> {
+  const network = config.network as `${string}:${string}`;
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= FACILITATOR_INIT_ATTEMPTS; attempt++) {
     const client = facilitatorOverride ?? facilitatorClientFor(config, cdp);
-    const server = new x402ResourceServer(client).register(config.network as `${string}:${string}`, new ExactEvmScheme());
-    const ready = server.initialize().catch((err) => {
-      servers.delete(key);
-      throw err;
+    const server = new x402ResourceServer(client).register(network, new ExactEvmScheme());
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const deadline = new Promise<"timeout">((resolve) => {
+      timer = setTimeout(() => resolve("timeout"), FACILITATOR_INIT_TIMEOUT_MS);
     });
-    entry = { server, ready };
-    servers.set(key, entry);
+    // initialize() swallows facilitator errors, so check the outcome rather than trust it.
+    const outcome = await Promise.race([server.initialize().then(() => "done" as const, (err: unknown) => ({ err })), deadline]);
+    if (timer !== undefined) clearTimeout(timer);
+    if (outcome === "done" && server.getSupportedKind(2, network, "exact")) return server;
+    lastError = outcome === "timeout" ? new Error(`facilitator initialization timed out after ${FACILITATOR_INIT_TIMEOUT_MS} ms`) : outcome === "done" ? new Error(`facilitator does not support exact on ${network}`) : outcome.err;
+    console.warn(JSON.stringify({ kind: "system", event: "facilitator_init_failed", attempt, error: String((lastError as Error)?.message ?? lastError) }));
   }
-  return entry;
+  throw lastError;
+}
+
+async function serverFor(config: Config, cdp?: { apiKeyId?: string; apiKeySecret?: string }): Promise<x402ResourceServer> {
+  const key = `${config.facilitatorUrl}|${config.network}`;
+  const cached = servers.get(key);
+  if (cached) return cached;
+  const server = await initializeServer(config, cdp);
+  servers.set(key, server);
+  return server;
 }
 
 /**
@@ -76,10 +103,12 @@ export interface PaymentService {
 }
 
 export function createPaymentService(config: Config, cdp?: { apiKeyId?: string; apiKeySecret?: string }): PaymentService {
-  const { server, ready } = serverFor(config, cdp);
+  // Resolved on first use, inside the request that needs it.
+  let ready: Promise<x402ResourceServer> | undefined;
+  const getServer = (): Promise<x402ResourceServer> => (ready ??= serverFor(config, cdp));
 
   const requirements = async (resourceUrl: string, timeoutSeconds: number): Promise<PaymentRequirements[]> => {
-    await ready;
+    const server = await getServer();
     return server.buildPaymentRequirementsFromOptions(
       [
         {
@@ -99,6 +128,7 @@ export function createPaymentService(config: Config, cdp?: { apiKeyId?: string; 
 
     async paymentRequired(resourceUrl, description, timeoutSeconds, error) {
       const reqs = await requirements(resourceUrl, timeoutSeconds);
+      const server = await getServer();
       const body = await server.createPaymentRequiredResponse(
         reqs,
         { url: resourceUrl, description, mimeType: "application/json", serviceName: config.serviceName },
@@ -115,6 +145,7 @@ export function createPaymentService(config: Config, cdp?: { apiKeyId?: string; 
         throw new PaymentError("invalid_payment_header", "The payment header could not be decoded.");
       }
       if (payload.x402Version !== 2) throw new PaymentError("unsupported_version", "Only x402 version 2 is supported.");
+      const server = await getServer();
       const matched = server.findMatchingRequirements(reqs, payload);
       if (!matched) throw new PaymentError("requirements_mismatch", "The payment does not match this resource's requirements (amount, asset, network or recipient).");
 
@@ -153,13 +184,20 @@ export function createPaymentService(config: Config, cdp?: { apiKeyId?: string; 
     },
 
     async verify(parsed, matched) {
-      await ready;
-      const res = await server.verifyPayment(parsed.payload, matched);
+      const server = await getServer();
+      let res;
+      try {
+        res = await server.verifyPayment(parsed.payload, matched);
+      } catch (err) {
+        // The facilitator timed out or is unreachable. Nothing was charged, so this is a
+        // 402 the client can answer with a fresh payment, not an internal error.
+        throw new PaymentError("facilitator_unavailable", `The payment facilitator did not answer: ${String((err as Error)?.message ?? err)}`);
+      }
       if (!res.isValid) throw new PaymentError(res.invalidReason ?? "verification_failed", res.invalidMessage ?? "Payment verification failed.");
     },
 
     async settle(parsed, matched) {
-      await ready;
+      const server = await getServer();
       const res = await server.settlePayment(parsed.payload, matched);
       if (!res.success) throw new PaymentError(res.errorReason ?? "settlement_failed", res.errorMessage ?? "Payment settlement failed.");
       return res;

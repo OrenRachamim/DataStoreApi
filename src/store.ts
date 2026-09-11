@@ -90,14 +90,23 @@ export async function writeMeta(bucket: R2Bucket, meta: Meta, ifMatch?: string):
 /**
  * Read-modify-write with retries on etag conflict. `mutate` returns false to
  * abort without writing. Returns the final meta or null when aborted/missing.
+ *
+ * Conflicts cluster: back-to-back reads of one item each decrement the counter
+ * after their response, and several of those updates overlap. Immediate retries
+ * all collide again, so each retry waits a random, growing interval first.
  */
+export const UPDATE_META_ATTEMPTS = 20;
+const UPDATE_META_BACKOFF_MS = 200;
+const UPDATE_META_BACKOFF_CAP_MS = 1500;
+
 export async function updateMeta(
   bucket: R2Bucket,
   id: string,
   mutate: (meta: Meta) => boolean | void,
-  attempts = 6,
+  attempts = UPDATE_META_ATTEMPTS,
 ): Promise<Meta | null> {
   for (let n = 0; n < attempts; n++) {
+    if (n > 0) await new Promise((resolve) => setTimeout(resolve, Math.floor(Math.random() * Math.min(UPDATE_META_BACKOFF_MS * n, UPDATE_META_BACKOFF_CAP_MS))));
     const cur = await readMeta(bucket, id);
     if (!cur) return null;
     const draft: Meta = structuredClone(cur.meta);

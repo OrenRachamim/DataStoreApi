@@ -133,7 +133,7 @@ describe("password (PWD)", () => {
     const it = await makeItem();
     expect((await setPassword(it.id, it.secret, PW)).status).toBe(204);
     const m = JSON.parse(await (await bucket().get(`meta/${it.id}`))!.text());
-    expect(m.password.iterations).toBe(600000);
+    expect(m.password.iterations).toBe(100000);
     expect(JSON.stringify(m)).not.toContain(PW);
     expect(((await (await status(it.id, it.secret)).json()) as { has_password: boolean }).has_password).toBe(true);
     await expectError(await setPassword(it.id, it.secret, "elevenchars"), 400, "invalid_request");

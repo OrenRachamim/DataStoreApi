@@ -3,8 +3,13 @@ import type { PasswordHash } from "./store";
 
 export const PASSWORD_MIN = 12;
 export const PASSWORD_MAX = 128;
-/** PBKDF2-SHA256 through WebCrypto. Argon2 is memory-bound and slow in Workers. */
-export const PBKDF2_ITERATIONS = 600_000;
+/**
+ * PBKDF2-SHA256 through WebCrypto. Argon2 is memory-bound and slow in Workers.
+ * Cloudflare Workers cap PBKDF2 at 100,000 iterations (a higher count fails at runtime
+ * with a 500; the local workerd used by the tests does not enforce the cap). Verification
+ * uses the count stored with each hash, so older hashes keep verifying.
+ */
+export const PBKDF2_ITERATIONS = 100_000;
 
 const enc = new TextEncoder();
 

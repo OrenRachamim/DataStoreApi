@@ -86,8 +86,22 @@ NODE_USE_ENV_PROXY=1 node scripts/facilitator-check.mjs                         
 API=$API E2E_PRIVATE_KEY=0x... NODE_USE_ENV_PROXY=1 node scripts/e2e.mjs
 ```
 
-Every step prints PASS or FAIL with the transaction hash. Check one hash on
-https://sepolia.basescan.org and confirm 0.01 USDC moved to `PAY_TO`.
+Every step prints PASS or FAIL. The last step reconciles every settlement on chain (receipt
+plus the USDC Transfer log to `PAY_TO`), so a green run already proves the money moved. A
+run costs about 0.12 USDC and takes 5 to 8 minutes.
+
+Notes from the first runs:
+
+- The browser steps need `playwright-core` (`npm i --no-save playwright-core`) and Chromium
+  (`CHROME=...`, default `/opt/pw-browsers/chromium`). Behind a TLS-intercepting proxy, import
+  its CA into Chromium's NSS store (`certutil -d sql:$HOME/.pki/nssdb -A -t C,, -n ccr -i cert.pem`).
+- If `POST /v1/items` hangs only through the session proxy (compare `curl` with and without
+  `--noproxy '*'`), run without `NODE_USE_ENV_PROXY`; the script then goes direct and launches
+  Chromium with `--no-proxy-server`.
+- The public facilitator sometimes answers "Payment settlement failed: Missing or invalid
+  parameters" (its own wallet racing on nonces). The API charges nothing in that case and the
+  script signs a fresh payment, so you will see RETRY lines; the reconciliation step confirms
+  no money moved for those.
 
 3. Optional browser check of the sandbox (TESTS.md DL-03): upload
    `scripts/sandbox-probe.html`, create a link, and run `scripts/browser-sandbox-check.mjs`.

@@ -229,7 +229,7 @@
 | PWD-13 | חלון 15 דקות | 4 כשלונות, שעון + 16 דקות, כשלון | לא נעול |
 | PWD-14 | נעילה לא חוסמת את הבעלים | פריט נעול, GET עם סוד | 200 |
 | PWD-15 | נעילה נשמרת ב-meta | | ב-meta מונה כשלונות וזמן, לא בזיכרון |
-| PWD-16 | PBKDF2 | יחידה | 600,000 איטרציות, salt אקראי לכל סיסמה, זמן אימות < 500ms |
+| PWD-16 | PBKDF2 | יחידה | 100,000 איטרציות (תקרת Workers; 600,000 נכשל ב-500 בפריסה), salt אקראי לכל סיסמה, זמן אימות < 500ms |
 | PWD-17 | פריט בלי סיסמה בדומיין השיתוף | `GET /d/{id}` בלי חתימה | 404 |
 
 ### 2.11 דומיין השיתוף וכותרות אבטחה (DL)
@@ -409,27 +409,36 @@
 | GET-* בדומיין השיתוף | `GET /d/itm_xxxxxxxxxxxxxxxxxxxxxx` בדומיין share | 404 JSON עם `X-Request-Id` |
 | חיבור ל-facilitator | `scripts/facilitator-check.mjs` | כמו למעלה: verify של ארנק ריק נכשל ב-`insufficient_balance` |
 
-### E2E עם USDC אמיתי על Base Sepolia (2026-09-11)
+### E2E מלא עם USDC אמיתי על Base Sepolia (2026-09-11)
 
-`scripts/e2e.mjs` עם ארנק משלם שמומן מה-faucet של Circle, מול ה-facilitator הציבורי.
+`scripts/e2e.mjs` הורחב ל-36 צעדים ומכסה: מסמכים ו-pricing, 402 בלי תשלום, העלאות JSON/HTML/PNG/PDF/CSV,
+סוג אסור (415 בלי חיוב), גוף ריק (400 בלי חיוב), שליפה בייט-בייט וכותרות, סוד שגוי/חסר, סטטוס,
+קישורים חתומים (inline ל-HTML עם CSP sandbox, attachment ל-PNG/PDF/CSV, clamp לתפוגת הפריט, זיוף חתימה
+ו-exp, revoke ודור חדש, הפרדת דומיינים), סיסמאות (קצרה, הגדרה, X-Password נכון/שגוי, דף דפדפן בטוח,
+טופס, עקיפה בקישור חתום, החלפה, הסרה, נעילה אחרי 5 כשלונות והבעלים לא נחסם), 100 קריאות ותשלום
+אוטומטי על ה-101, הארכה, הארכה לא תקינה בלי חיוב, חבילת קריאות, idempotent replay ו-409 על גוף שונה,
+Chromium אמיתי (DL-03 sandbox ו-E2E-05 טופס סיסמה עם הורדה), פידבק abuse, מחיקה, ניקוי, והתאמה על
+השרשרת (receipt ו-Transfer log של USDC לכל tx).
 
-| בדיקה | תוצאה |
-|---|---|
-| E2E-01 upload JSON | PASS, tx `0x8e4ccf5ba3c357250464a0b160299c81eddc8a8254d110d001a8e00abfd31931` (block 46672835, status success) |
-| E2E-01 retrieve / status / delete | PASS |
-| E2E-07 extend | PASS, tx `0x9c59420458b876e8c07ee86f6b917c21c78f7ec84de8d96bb8284f4ec00961e6` |
-| E2E-07 read pack | PASS, `reads_remaining` 1099, tx `0xa43297abeb286133486aecd36f1b3feabacaccff0bc300b4724043e2c461195a` |
-| share link | PASS, הקישור החתום נפתח בדומיין share |
-| E2E-06 idempotent replay | PASS בריצה מלאה שנייה: ה-replay החזיר אותו `id` ואותו `payment.tx` (`0x22b76fe51714cc94bfef1057ea67aeeac54db0b98931fd2389857de9787eb5eb`), בלי חיוב כפול. בריצה הראשונה נפל ב-`fetch failed` (שגיאת רשת בצד הלקוח, לא חזרה). בבדיקה מבודדת נצפה גם 402 עם "Payment settlement failed: RPC Request failed" מ-`sepolia.base.org` דרך ה-facilitator: לא נשמר פריט ולא נגבה תשלום (התנהגות PAY-02), והבקשה הבאה עם אותו מפתח יצרה פריט חדש כראוי |
-| feedback | PASS |
-| אימות על השרשרת | יתרת USDC של `PAY_TO` אחרי הריצות: 0.08, בדיוק שמונה קריאות משולמות מוצלחות. סליקה שנכשלה לא חייבה |
+**תוצאה סופית: 36/36 עברו** (הריצה האחרונה, 10 סליקות, 0.10 USDC הגיעו ל-`PAY_TO`, כל tx אומת על השרשרת).
 
-ריצות מלאות: ריצה 1 עברה 8/9 (E2E-06 נפל ב-`fetch failed`), ריצה 2 נפלה כבר ב-E2E-01 עם
-`fetch failed` לפני שנשלחה בקשה מוצלחת, ריצה 3 עברה 9/9. ה-`fetch failed` הוא כשל רשת
-לסירוגין בצד הלקוח (ה-API וה-facilitator ענו 200 ב-curl מיד אחריו) ולא תשובה מהשרת.
+באגים שהריצות חשפו ותוקנו בדרך:
 
-הערה: ה-RPC הציבורי של Base Sepolia שה-facilitator הציבורי משתמש בו נכשל לסירוגין. ה-Worker
-מחזיר במקרה כזה 402 עם ההסבר ולקוח x402 פשוט מנסה שוב. ב-production ה-facilitator של CDP.
+| ממצא | סיבה | תיקון |
+|---|---|---|
+| `PUT /password` החזיר 500 בפריסה (עבר ב-vitest) | Cloudflare Workers מגבילים PBKDF2 ל-100,000 איטרציות; הקוד השתמש ב-600,000. workerd המקומי לא אוכף | `PBKDF2_ITERATIONS` = 100,000. אימות משתמש במונה השמור בכל hash |
+| בקשות ל-`POST /v1/items` נתקעו 15-30 שניות לסירוגין, בלי לוג ועם 1ms CPU | ה-cache של אתחול x402 מול ה-facilitator שמר הבטחה ממתינה ברמת המודול; כשהבקשה שיצרה אותה בוטלה, ההבטחה לא נפתרה וכל הבקשות הבאות באותו isolate חיכו עליה | ה-cache שומר רק שרת שאותחל בהצלחה; האתחול רץ בתוך הבקשה עם deadline של 5 שניות ועד 3 ניסיונות, כל ניסיון עם client חדש |
+| `/verify` שנתקע ב-facilitator הפך ל-500 | שגיאה שאינה `PaymentError` עברה ל-handler הכללי | ממופה ל-402 עם `facilitator_unavailable`, כך שלקוח x402 חותם תשלום חדש |
+| מונה הקריאות איבד ~30% מההחסרות בקריאות צמודות (`read_counter_failed: too many conflicts`) | 6 ניסיונות חוזרים מיידיים על כתיבה מותנית שמתנגשת שוב ושוב | 20 ניסיונות עם backoff אקראי גדל. עדיין מונה "רך" (CNT-05): בריצה האחרונה אבדו 13 מתוך 100 בקריאות צמודות ללא מרווח, 0 מתוך 30 עם מרווח 400ms. תיקון מלא דורש מונה מחוץ ל-R2 (Durable Object) |
 
-**מה עדיין לא בוצע:** E2E-02..05 ו-E2E-08..10 (הסקריפט מכסה חלק מהמזהים). בדיקת ה-cron
-(`expiry_sweep`) בלוגים אחרי שלושה ימים ממתינה.
+מה שאינו באג של ה-API אבל השפיע על הריצות:
+
+- ה-facilitator הציבורי `x402.org` מחזיר לסירוגין "Payment settlement failed: Missing or invalid parameters"
+  (הארנק החם שלו מתנגש על nonce, "replacement transaction underpriced"). ה-API מחזיר 402 בלי לשמור ובלי
+  לחייב, והלקוח חותם תשלום חדש. ההתאמה על השרשרת אישרה שכשל כזה לא הזיז כסף. ב-production ה-facilitator
+  של CDP.
+- ה-proxy של סביבת הסשן תוקע `POST /v1/items` (5 מתוך 12 ב-curl) בעוד יציאה ישירה נקייה; לכן הריצות
+  בוצעו בלי `NODE_USE_ENV_PROXY`. מתועד ב-DEPLOY.md.
+
+**עדיין לא בוצע:** E2E-02 (לקוח Python), E2E-08 (ריצת cron אמיתית, לבדוק בלוגים אחרי 01:15 UTC),
+E2E-10 (סוכן LLM עם tools.json).
